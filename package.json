@@ -1,0 +1,14 @@
+{
+    "name": "duplicate-selected-frame",
+    "version": "1.0.0",
+    "private": true,
+    "devDependencies": {
+        "@figma/plugin-typings": "^1.119.0",
+        "esbuild": "^0.24.0",
+        "typescript": "^5.4.0"
+    },
+    "scripts": {
+        "build": "esbuild code.ts --bundle --platform=node --outfile=code.js",
+        "watch": "esbuild code.ts --bundle --platform=node --outfile=code.js --watch"
+    }
+}
