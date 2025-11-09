@@ -12,7 +12,7 @@
 
   const selection = figma.currentPage.selection;
   if (selection.length === 0) {
-    figma.notify("Select a Frame or a layer inside a Frame.");
+    figma.notify("Select one or more Frames to duplicate below.");
     figma.closePlugin();
     return;
   }
@@ -22,30 +22,39 @@
     .filter((f): f is FrameNode => f !== null);
 
   if (frames.length === 0) {
-    figma.notify("No Frame found in selection.");
+    figma.notify("No Frames found in selection.");
     figma.closePlugin();
     return;
   }
+
+  // Track where to place next comments section
+  let nextAvailableY = Math.max(...frames.map((f) => f.y + f.height)) + 200;
+  const verticalGap = 200;
+
+  // Store all link relationships for navigation
+  const globalCommentLinks: Record<string, string> = {};
 
   for (const frame of frames) {
     const parent = frame.parent as BaseNode & ChildrenMixin;
     if (!parent) continue;
 
-    // ✅ Duplicate frame
+    // ✅ Duplicate frame below the original
     const dup = frame.clone();
-    parent.insertChild(parent.children.indexOf(frame) + 1, dup);
-    dup.x = frame.x + frame.width + 100;
     dup.name = `${frame.name} Copy`;
+
+    dup.x = frame.x;
+    dup.y = frame.y + frame.height + 100;
+    parent.appendChild(dup);
 
     const children = dup.children;
     const commentTargets = [1, 3];
     const commentData: { id: string; title: string; text: string }[] = [];
 
+    // 🎈 Create comment bubbles
     for (const idx of commentTargets) {
       if (children[idx]) {
         const target = children[idx];
 
-        // 🎈 Create comment bubble
         const bubble = figma.createFrame();
         bubble.resize(120, 46);
         bubble.cornerRadius = 20;
@@ -65,7 +74,7 @@
         text.fontSize = 12;
         bubble.appendChild(text);
 
-        // Position bubble top-right
+        // Place bubble top-right
         const offsetX = 8;
         const offsetY = -8;
         bubble.x = target.x + target.width - bubble.width / 2 - offsetX;
@@ -73,17 +82,20 @@
 
         dup.appendChild(bubble);
 
+        const commentText = `This is a note for ${
+          target.name || `Node ${idx + 1}`
+        }`;
         commentData.push({
           id: bubble.id,
           title: bubble.name,
-          text: `This is a note for ${target.name || `Node ${idx + 1}`}`,
+          text: commentText,
         });
       }
     }
 
-    // 🗨️ Comments Section
+    // 🗨️ Create Comments Section for this duplicate
     const commentsFrame = figma.createFrame();
-    commentsFrame.name = "🗨️ Comments Section";
+    commentsFrame.name = `🗨️ Comments Section (${dup.name})`;
     commentsFrame.layoutMode = "VERTICAL";
     commentsFrame.primaryAxisSizingMode = "AUTO";
     commentsFrame.counterAxisSizingMode = "AUTO";
@@ -102,7 +114,7 @@
     commentsFrame.cornerRadius = 12;
 
     const title = figma.createText();
-    title.characters = "💬 Comments";
+    title.characters = `💬 Comments for ${dup.name}`;
     title.fontSize = 16;
     commentsFrame.appendChild(title);
 
@@ -132,57 +144,66 @@
       card.appendChild(nameText);
       card.appendChild(descText);
 
+      // Link card → bubble
       card.setPluginData("targetBubbleId", comment.id);
+      globalCommentLinks[comment.id] = dup.id;
+
       commentsFrame.appendChild(card);
     }
 
-    commentsFrame.x = dup.x + dup.width + 80;
-    commentsFrame.y = dup.y;
+    // 🧭 Position commentsFrame below everything (no overlap)
+    commentsFrame.x = dup.x + dup.width + 100;
+    commentsFrame.y = nextAvailableY;
+
     parent.appendChild(commentsFrame);
 
-    // 🎯 Click-to-focus logic
-    figma.on("selectionchange", () => {
-      const selected = figma.currentPage.selection[0];
-      if (selected && selected.getPluginData("targetBubbleId")) {
-        const bubbleId = selected.getPluginData("targetBubbleId");
-        const targetBubble = figma.getNodeById(bubbleId);
-
-        // ✅ Type check: only apply glow to nodes with `effects`
-        if (
-          targetBubble &&
-          "effects" in targetBubble &&
-          Array.isArray(targetBubble.effects)
-        ) {
-          const bubble = targetBubble as
-            | FrameNode
-            | RectangleNode
-            | ComponentNode;
-          figma.viewport.scrollAndZoomIntoView([bubble]);
-          figma.currentPage.selection = [bubble];
-
-          const glow: Effect = {
-            type: "DROP_SHADOW",
-            color: { r: 1, g: 0.9, b: 0, a: 0.8 },
-            offset: { x: 0, y: 0 },
-            radius: 16,
-            visible: true,
-            blendMode: "NORMAL",
-          };
-
-          const originalEffects = bubble.effects.slice();
-          bubble.effects = [...originalEffects, glow];
-
-          figma.notify(`Focused on ${bubble.name}`);
-
-          setTimeout(() => {
-            bubble.effects = originalEffects;
-          }, 1200);
-        } else {
-          figma.notify("Linked comment not found or not highlightable.");
-        }
-      }
-    });
+    // Update next Y offset so next section is placed below
+    nextAvailableY += commentsFrame.height + verticalGap;
   }
 
-  figma.notify("Comments added! Click a comment card to focus the bubble.");
+  // 🎯 Click-to-focus logic with glow
+  figma.on("selectionchange", () => {
+    const selected = figma.currentPage.selection[0];
+    if (!selected) return;
+
+    const targetBubbleId = selected.getPluginData("targetBubbleId");
+    if (targetBubbleId) {
+      const targetBubble = figma.getNodeById(targetBubbleId);
+
+      if (
+        targetBubble &&
+        "effects" in targetBubble &&
+        Array.isArray(targetBubble.effects)
+      ) {
+        const bubble = targetBubble as
+          | FrameNode
+          | RectangleNode
+          | ComponentNode;
+        figma.viewport.scrollAndZoomIntoView([bubble]);
+        figma.currentPage.selection = [bubble];
+
+        const glow: Effect = {
+          type: "DROP_SHADOW",
+          color: { r: 1, g: 0.9, b: 0, a: 0.8 },
+          offset: { x: 0, y: 0 },
+          radius: 16,
+          visible: true,
+          blendMode: "NORMAL",
+        };
+
+        const originalEffects = bubble.effects.slice();
+        bubble.effects = [...originalEffects, glow];
+
+        figma.notify(`Focused on ${bubble.name}`);
+
+        setTimeout(() => {
+          bubble.effects = originalEffects;
+        }, 1200);
+      }
+    }
+  });
+
+  figma.notify(
+    "✅ Duplicated below + Comments added. Click a comment to focus its bubble!"
+  );
 })();
